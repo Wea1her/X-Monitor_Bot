@@ -1,173 +1,170 @@
-# Telegram Monitor Bot Control Plane v2 Design
+# Telegram 监控 Bot 控制面 v2 设计
 
-## Background
+## 背景
 
-The project currently has a single-user OpenTwitter WSS probe. The probe reads `WATCH_ACCOUNTS` from `.env`, calls 6551 watch-add, subscribes to 6551 WSS events, writes raw NDJSON logs, and optionally sends fixed Telegram messages.
+当前项目是一个单用户 OpenTwitter WSS 探针。探针从 `.env` 读取 `WATCH_ACCOUNTS`、调用 6551 watch-add、订阅 6551 WSS 事件、写入原始 NDJSON 日志，并可选地推送到固定的 Telegram chat。
 
-The next stage is a Telegram Bot control plane. The bot should let the owner manage monitoring sources and push destinations from Telegram DM using buttons. It should persist configuration and event history in PostgreSQL, use Redis only for runtime cache/locks, and keep the old probe as a diagnostic tool.
+下一阶段是 Telegram Bot 控制面。Bot 让 owner 在 Telegram 私聊中通过按钮管理监控源和推送目标，把配置和事件历史持久化到 PostgreSQL，Redis 仅承担运行时缓存/锁，老 probe 保留为诊断工具。
 
-## Goals
+## 目标
 
-- Provide a private single-owner Telegram bot.
-- Use Telegram DM as the primary control plane.
-- Use inline buttons for adding, listing, enabling, disabling, deleting, and subscribing monitors.
-- Auto-discover groups/channels when the bot is added to them.
-- Push Twitter events to selected Telegram groups/channels.
-- Store source, destination, subscription, event, and delivery state in PostgreSQL.
-- Use Redis for runtime offset, dedupe, and short-lived locks only.
-- Keep the current `npm run dev` probe as a 6551 diagnostic tool.
-- First phase implements the button flows for Twitter, website, and contract, but only Twitter has a real worker.
+- 提供一个私人单 owner 的 Telegram bot。
+- 以 Telegram 私聊（DM）作为主要控制面。
+- 用 inline 按钮完成新增、列表、启用、停用、删除、订阅监控的全部流程。
+- bot 被加入群组/频道时自动发现并入库为待启用推送目标。
+- 把 Twitter 事件推送到 owner 选择的 Telegram 群/频道。
+- 监控源、推送目标、订阅关系、事件、投递结果存入 PostgreSQL。
+- Redis 只做运行时 polling offset、事件去重、短期锁。
+- 保留 `npm run dev` 探针作为 6551 通道诊断工具。
+- 第一阶段为 Twitter / website / contract 三种类型实现按钮流程，但只有 Twitter 接入真实 worker。
 
-## Non-goals
+## 非目标
 
-- No multi-user support.
-- No commercial/SaaS features, billing, or plan management.
-- No web admin panel in this phase.
-- No Telegram webhook mode; use long polling.
-- No website worker in this phase.
-- No contract worker in this phase.
-- No proactive Telegram send rate limiting beyond handling Telegram 429 responses.
-- No automatic migration from legacy `.env` `WATCH_ACCOUNTS`.
+- 不支持多用户。
+- 不做商业化/SaaS、计费、套餐管理。
+- 本阶段不做 Web 管理后台。
+- 不实现 Telegram webhook 模式，仅使用 long polling。
+- 本阶段不实现 website worker。
+- 本阶段不实现 contract worker。
+- 不主动做 Telegram 限频，仅依赖 Telegram 429 退避。
+- 不自动迁移老 `.env` 中的 `WATCH_ACCOUNTS`。
 
-## User model
+## 用户模型
 
-The system is for one owner only. `OWNER_USER_IDS` contains the Telegram user id(s) allowed to interact with the bot. All non-owner updates are silently ignored.
+系统只服务一位 owner。`OWNER_USER_IDS` 包含被允许与 bot 交互的 Telegram 用户 ID。所有非 owner 的 update 都被静默丢弃，不做任何回复。
 
-The owner configures everything in DM with the bot. Groups and channels are push targets only. When the bot is added to a group or channel, it receives a `my_chat_member` update, stores the chat as a disabled destination, and sends the owner a DM card to enable or ignore the destination.
+owner 在与 bot 的私聊中完成全部配置。群组和频道仅作为推送目标。当 bot 被加入群或频道时，会收到 `my_chat_member` 事件，bot 把该 chat 入库为禁用状态的 destination，并向 owner 私聊发送一张可启用/忽略的卡片。
 
-## Deployment decision
+## 部署决策
 
-Use option A for now: PostgreSQL and Redis are self-hosted with Docker Compose both locally and on the VPS.
+第一阶段采用方案 A：PostgreSQL 与 Redis 在本地与 VPS 都通过 Docker Compose 自托管。
 
-The application must still use `DATABASE_URL` and `REDIS_URL` as the only connection boundary. If the database later moves to Supabase/Neon or Redis moves to a managed provider, no code should change.
+应用层必须把 `DATABASE_URL` 与 `REDIS_URL` 作为唯一连接边界。如未来 PG 迁到 Supabase / Neon、Redis 迁到 Upstash 等托管服务，仅修改环境变量即可，不应改任何代码。
 
-## Process topology
+## 进程拓扑
 
-Two commands remain separate:
+两条命令保持独立：
 
 ```text
-npm run dev  -> current OpenTwitter WSS probe, diagnostic only
-npm run bot  -> Telegram control-plane bot, production path
+npm run dev  -> 现有 OpenTwitter WSS 探针，仅诊断用
+npm run bot  -> Telegram 控制面 bot，生产入口
 ```
 
-The probe remains useful for checking whether the 6551 REST/WSS channel is healthy without involving PostgreSQL, Redis, or the bot control plane. README should mark it as a diagnostic tool.
+探针的价值在于不依赖 PostgreSQL / Redis / 控制面就能验证 6551 REST/WSS 通道是否健康。README 应明确标注它是诊断工具。
 
-The bot process runs:
+bot 进程内部并行运行：
 
-- grammY long polling for Telegram updates.
-- A Twitter worker connected to 6551 WSS.
-- A dispatcher that fans out events to Telegram destinations.
-- Prisma and ioredis clients.
+- grammY long polling 接收 Telegram 更新。
+- Twitter worker 维持 6551 WSS 长连。
+- Dispatcher 把事件 fan-out 到目标。
+- Prisma 与 ioredis 客户端单例。
 
-## Architecture
+## 架构
 
 ```text
-Bot layer (src/bot/)
-  - grammY commands, callback queries, conversations, my_chat_member updates
-  - owner guard middleware
-  - inline keyboards and user-visible messages
+Bot 层 (src/bot/)
+  - grammY commands、callback queries、conversations、my_chat_member
+  - owner guard 中间件
+  - inline keyboards 与对用户可见的文案
 
-Service layer (src/services/)
-  - source CRUD
-  - destination CRUD
-  - subscription CRUD
-  - event and delivery logging
+Service 层 (src/services/)
+  - source / destination / subscription / event 的业务编排
 
-Monitor registry (src/monitors/)
-  - common MonitorAdapter interface
-  - twitter, website, contract target validation and descriptions
+Monitor Registry (src/monitors/)
+  - 通用 MonitorAdapter 接口
+  - twitter / website / contract 的 target 校验与描述
 
 Workers (src/workers/)
-  - first phase only has twitter-worker
-  - connects to 6551 WSS and emits normalized events
+  - 第一阶段只包含 twitter-worker
+  - 连接 6551 WSS 并发出标准化事件
 
 Routing (src/routing/)
-  - dispatcher maps events to enabled subscriptions and destinations
-  - sends Telegram messages and records delivery results
+  - dispatcher 把事件映射到启用的 subscription / destination
+  - 调 Telegram API 推送并记录投递结果
 
 Store (src/store/)
-  - Prisma client singleton
-  - ioredis client singleton and helper functions
+  - Prisma 客户端单例
+  - ioredis 客户端单例与 helper 函数
 ```
 
-## Data flow
+## 数据流
 
-### Configuration flow
+### 配置流
 
 ```text
-Owner DM -> bot button/command -> service -> monitor adapter validation -> PostgreSQL
+Owner DM -> bot 按钮/命令 -> service -> monitor adapter 校验 -> PostgreSQL
 ```
 
-Example:
+示例：
 
 ```text
-Owner adds twitter:elonmusk
-  -> source-service validates target through twitter-adapter
-  -> monitor_sources upsert with type=twitter, normalizedTarget=elonmusk
+Owner 添加 twitter:elonmusk
+  -> source-service 通过 twitter-adapter 校验
+  -> monitor_sources 写入：type=twitter, normalizedTarget=elonmusk
 ```
 
-### Destination discovery flow
+### 推送目标自动发现流
 
 ```text
-Bot added to group/channel
-  -> Telegram my_chat_member update
-  -> destination-service upserts destination as enabled=false
-  -> bot DMs owner with enable/ignore buttons
-  -> owner enables destination
+bot 被拉入群/频道
+  -> 收到 Telegram my_chat_member 事件
+  -> destination-service upsert，enabled=false
+  -> bot 在 DM 给 owner 发卡片：启用 / 忽略
+  -> owner 启用 destination
 ```
 
-### Event flow
+### 事件流
 
 ```text
-PostgreSQL enabled twitter sources
-  -> twitter-worker calls 6551 watch-add
-  -> twitter-worker connects to 6551 WSS
-  -> 6551 pushes raw event
-  -> worker finds matching monitor source
-  -> Redis SETNX dedupe key with 24h TTL
-  -> event-service writes event_logs
-  -> dispatcher loads enabled subscriptions and destinations
-  -> Telegram sendMessage via grammY API
-  -> event-service writes delivery_logs status=ok|error
+PostgreSQL 中已启用的 twitter sources
+  -> twitter-worker 调用 6551 watch-add
+  -> twitter-worker 建立 6551 WSS 长连
+  -> 6551 推原始事件
+  -> worker 找到对应 source
+  -> Redis SETNX dedupe key（24h TTL）
+  -> event-service 写 event_logs
+  -> dispatcher 加载启用的 subscriptions / destinations
+  -> 通过 grammY API 调 Telegram sendMessage
+  -> event-service 写 delivery_logs（status=ok|error）
 ```
 
-PostgreSQL decides what to monitor and where to push. 6551 WSS is only the external real-time event stream. The database never connects to 6551 directly; the bot process connects to both sides.
+PostgreSQL 决定监控谁、推到哪里。6551 WSS 只是外部实时事件流。**数据库永远不直接连 6551**，是 bot 进程同时连接两边。
 
-## Monitor types
+## 监控类型
 
 ### Twitter
 
-First phase includes real Twitter monitoring:
+第一阶段包含真实 Twitter 监控：
 
-- Validate username by trimming whitespace and removing leading `@`.
-- Reject empty usernames and malformed handles.
-- Store normalized target without `@`.
-- Use existing 6551 watch-add REST client.
-- Receive events from 6551 WSS.
-- Push received events to subscribed destinations.
+- 用户名校验：去掉首尾空白和前导 `@`。
+- 拒绝空用户名和非法 handle。
+- 标准化 target 不带 `@`。
+- 复用现有 6551 watch-add REST 客户端。
+- 接收 6551 WSS 推送的事件。
+- 把事件推送到所有已订阅的 destination。
 
-Known external constraint: 6551 follow/unfollow events require the monitored account to have more than 5000 followers. This should be documented in help text or troubleshooting docs.
+已知外部约束：6551 关注/取关事件要求被监控账号粉丝数 > 5000 才会推送。这一点应记录在帮助文案或排障文档中。
 
 ### Website
 
-First phase only implements control-plane behavior:
+第一阶段只实现控制面行为：
 
-- Validate `http://` or `https://` URL.
-- Store normalized URL.
-- Show in list with a clear `worker not available yet` marker.
-- Do not start a website worker or send website events.
+- 校验 `http://` 或 `https://` URL。
+- 标准化 URL 后入库。
+- 列表中显示明显的"worker 暂未上线"标记。
+- 不启动 website worker，不发送 website 事件。
 
 ### Contract
 
-First phase only implements control-plane behavior:
+第一阶段只实现控制面行为：
 
-- Validate chain name and address format.
-- Supported initial chains: `eth`, `bsc`, `sol`.
-- Store normalized chain/address config.
-- Show in list with a clear `worker not available yet` marker.
-- Do not start a contract worker or send contract events.
+- 校验链名与地址格式。
+- 初期支持的链：`eth`、`bsc`、`sol`。
+- 标准化链名 + 地址后入库。
+- 列表中显示明显的"worker 暂未上线"标记。
+- 不启动 contract worker，不发送 contract 事件。
 
-## Prisma data model
+## Prisma 数据模型
 
 ```prisma
 model MonitorSource {
@@ -249,78 +246,78 @@ model DeliveryLog {
 }
 ```
 
-`Destination.enabled` defaults to `true` in the schema for normal creation, but destinations auto-discovered from `my_chat_member` must be explicitly inserted with `enabled=false` until the owner enables them.
+`Destination.enabled` 在 schema 层默认 `true`，但通过 `my_chat_member` 自动发现写入的 destination **必须显式设置为 `enabled=false`**，等待 owner 主动启用。
 
-## Redis keys
+## Redis 键约定
 
-| Key | Purpose | TTL |
+| Key | 用途 | TTL |
 | --- | --- | --- |
-| `tg:offset` | Telegram polling offset recovery | no TTL |
-| `dedupe:event:<key>` | event dedupe lock via SETNX | 24h |
-| `lock:source:<source_id>` | optional short-lived source processing lock | short TTL |
+| `tg:offset` | Telegram polling offset 持久化 | 永久 |
+| `dedupe:event:<key>` | 通过 SETNX 做事件去重 | 24h |
+| `lock:source:<source_id>` | 可选：source 处理短期锁 | 短 TTL |
 
-Redis must not be the source of truth for business data.
+Redis 不能成为业务数据真相。
 
-## Dedupe key strategy
+## 去重 Key 策略
 
-For Twitter events:
+Twitter 事件：
 
 ```text
-tw:<twAccount>:<eventType>:<content.id if present else sha1(raw event payload)>
+tw:<twAccount>:<eventType>:<content.id 或 sha1(原始事件 payload)>
 ```
 
-The worker first attempts Redis `SET key value NX EX 86400`. If Redis is unavailable, PostgreSQL `event_logs.dedupeKey` uniqueness is the fallback. Duplicate events are not dispatched.
+worker 优先尝试 Redis `SET key value NX EX 86400`。若 Redis 不可用，由 PostgreSQL `event_logs.dedupeKey` 唯一约束兜底。重复事件不参与分发。
 
 ## Bot UX
 
-### Main menu
+### 主菜单
 
 ```text
 X Monitor Bot
 
-[Monitoring list] [Add monitor]
-[Remove monitor] [Destinations]
-[Help]
+[监控列表] [添加监控]
+[删除监控] [推送目标]
+[帮助]
 ```
 
-### Add monitor wizard
+### 添加监控向导
 
 ```text
-Owner taps Add monitor
-  -> bot asks monitor type: Twitter / Website / Contract
-  -> owner selects type
-  -> bot asks for target input
-  -> adapter validates target
-  -> source-service upserts source
-  -> bot confirms result and offers destination configuration
+Owner 点击"添加监控"
+  -> bot 询问监控类型：Twitter / Website / Contract
+  -> Owner 选择类型
+  -> bot 请求输入 target
+  -> adapter 校验 target
+  -> source-service upsert source
+  -> bot 确认结果，并提供"订阅推送目标"入口
 ```
 
-Website and contract confirmations must clearly say the worker is not available yet and no events will be pushed for that type.
+Website 与 Contract 的添加确认必须明确告知"worker 暂未上线，不会推送事件"。
 
-### Destination flow
+### 推送目标流程
 
 ```text
-Owner adds bot to group/channel
-  -> bot stores destination as disabled
-  -> bot DMs owner: new destination detected
-  -> owner taps Enable or Ignore
+Owner 把 bot 拉入群/频道
+  -> bot 把该 chat 入库为禁用 destination
+  -> bot DM 给 owner：检测到新可用推送目标
+  -> Owner 点击"启用"或"忽略"
 ```
 
-### Subscription flow
+### 订阅流程
 
 ```text
-Owner opens monitoring list
-  -> selects a monitor
-  -> opens subscription settings
-  -> selects enabled destinations
-  -> saves
+Owner 打开监控列表
+  -> 选择某条监控
+  -> 进入订阅设置
+  -> 勾选已启用的 destinations
+  -> 保存
 ```
 
-### Commands
+### 命令清单
 
-Commands are shortcuts for the same button flows:
+命令是按钮流程的快捷方式：
 
-- `/start`, `/menu`, `/help`
+- `/start`、`/menu`、`/help`
 - `/list`
 - `/destinations`
 - `/add <type> <target>`
@@ -329,9 +326,9 @@ Commands are shortcuts for the same button flows:
 - `/disable <id>`
 - `/cancel`
 
-All commands go through the owner guard.
+所有命令都经过 owner guard 中间件。
 
-## File structure
+## 文件结构
 
 ```text
 src/
@@ -387,12 +384,12 @@ tests/
   integration/
 ```
 
-Existing probe files remain, but `config.ts` should be refactored into separate parse functions:
+老 probe 文件保留不动，但 `config.ts` 需要拆成两个解析函数：
 
-- `parseProbeConfig(env)` for the diagnostic probe.
-- `parseBotConfig(env)` for the bot process.
+- `parseProbeConfig(env)` 给老探针用。
+- `parseBotConfig(env)` 给 bot 进程用。
 
-## Package scripts
+## package.json scripts
 
 ```json
 {
@@ -412,25 +409,25 @@ Existing probe files remain, but `config.ts` should be refactored into separate 
 }
 ```
 
-## Dependencies
+## 依赖
 
-Runtime:
+运行时新增：
 
 - `grammy`
 - `@grammyjs/conversations`
 - `@prisma/client`
 - `ioredis`
-- existing `dotenv` and `ws`
+- 沿用现有 `dotenv`、`ws`
 
-Development:
+开发时新增：
 
 - `prisma`
 - `vitest-mock-extended`
-- existing TypeScript/Vitest/tsx dependencies
+- 沿用现有 TypeScript / Vitest / tsx
 
 ## Docker Compose
 
-Use PostgreSQL 16 and Redis 7:
+使用 PostgreSQL 16 与 Redis 7：
 
 ```yaml
 services:
@@ -464,7 +461,7 @@ volumes:
   redisdata:
 ```
 
-## Environment variables
+## 环境变量
 
 ```env
 TELEGRAM_BOT_TOKEN=
@@ -473,79 +470,79 @@ TWITTER_TOKEN=
 DATABASE_URL=postgresql://x:x@localhost:5432/x_monitor
 REDIS_URL=redis://localhost:6379
 
-# Diagnostic probe only
+# 仅诊断 probe 使用
 WATCH_ACCOUNTS=elonmusk,VitalikButerin
 TELEGRAM_CHAT_ID=
 LOG_DIR=logs
 ```
 
-No automatic migration should read legacy `WATCH_ACCOUNTS` into PostgreSQL.
+不实现"老 `WATCH_ACCOUNTS` 自动迁移到 PostgreSQL"。
 
-## Error handling
+## 错误处理
 
-- Startup fails fast if PostgreSQL or Redis cannot connect.
-- Runtime database errors are caught by handlers and shown as a retryable user-facing failure.
-- Redis runtime failures do not crash the bot; PostgreSQL uniqueness remains the dedupe fallback.
-- Non-owner updates are silently ignored.
-- Invalid targets return adapter-specific usage guidance.
-- Duplicate source adds return the existing source id.
-- Telegram 429 responses rely on grammY retry behavior; final failures are written to `delivery_logs`.
-- 6551 WSS disconnects reconnect with capped exponential backoff plus jitter.
-- Malformed 6551 JSON is logged and skipped.
-- Unknown callback data returns a stale-button message to the owner.
+- 启动期 PostgreSQL 或 Redis 连不上 → 进程退出 1，依赖外部 supervisor 重启。
+- 运行期 DB 错误由 handler 捕获，回复用户"操作失败，请重试"。
+- 运行期 Redis 失败不会让 bot 崩溃；PostgreSQL 唯一约束作为去重兜底。
+- 非 owner 更新静默丢弃，不回复任何内容。
+- 非法 target 由 adapter 抛错，handler 给出该类型的使用示例。
+- 重复添加返回已存在的 source id。
+- Telegram 429 由 grammY 内置退避处理；最终失败写入 `delivery_logs`。
+- 6551 WSS 断线使用带 jitter 的指数退避重连。
+- 畸形 6551 JSON 写 warn 日志后跳过。
+- 未知 callback data 回复"按钮已过期，请重新打开菜单"。
 
-### WSS jitter
+### WSS 重连 jitter
 
-Reconnect delay should use capped exponential backoff with jitter:
+重连延迟使用带上限的指数退避加抖动：
 
 ```text
 baseDelay = min(30000, 1000 * 2 ** attempt)
 delay = baseDelay * (0.8 + Math.random() * 0.4)
 ```
 
-Apply this to the new Twitter worker. If the old probe is touched during implementation, apply the same helper there too.
+新 Twitter worker 必须采用此算法。如实施过程中触碰到老 probe，则同步采用同一份 helper。
 
-## Testing strategy
+## 测试策略
 
-### Unit tests
+### 单元测试
 
-- Monitor adapters: target validation and description.
-- Services: source, destination, subscription, event behavior with mocked Prisma/Redis.
-- Dispatcher: fanout, failure isolation, delivery logging.
-- Bot middleware and handlers: owner guard, callback data, menu/list rendering, add-source conversation, destination discovery.
-- Worker: WSS message handling with injected dependencies.
-- Existing probe tests remain green.
+- Monitor adapter：target 校验与描述。
+- Service：source / destination / subscription / event 行为，使用 mock 的 Prisma / Redis。
+- Dispatcher：fanout、错误隔离、投递日志。
+- Bot 中间件与 handler：owner guard、callback data、菜单/列表渲染、添加监控向导、推送目标自动发现。
+- Worker：WSS 消息处理（依赖注入）。
+- 现有 probe 单测保持绿。
 
-### Integration tests
+### 集成测试
 
-Use Docker-backed PostgreSQL and Redis for the boundaries mocks cannot prove:
+只测 mock 不可信的边界：
 
-- Prisma migration and roundtrip CRUD.
-- Redis SETNX dedupe behavior.
-- Dispatcher using real PostgreSQL/Redis and mocked Telegram API.
+- Prisma 迁移与 CRUD roundtrip。
+- Redis SETNX 去重行为。
+- 真 PG + 真 Redis + mock Telegram API 的 dispatcher 端到端。
 
-## Verification checklist
+## 验收清单
 
-- `npm run db:up && npm run db:migrate` succeeds on a clean machine.
-- `npm run bot` starts after PostgreSQL and Redis are healthy.
-- Owner DM `/start` shows the main menu.
-- Non-owner messages are silently ignored.
-- Adding the bot to a test group DMs the owner with a destination card.
-- Owner can enable/disable destinations.
-- Owner can add, list, enable, disable, remove Twitter sources.
-- Owner can add website and contract sources, and they display as worker-not-available.
-- Owner can subscribe/unsubscribe destinations for a source.
-- Twitter events from 6551 are written to `event_logs` and pushed to subscribed destinations.
-- Delivery success/failure is written to `delivery_logs`.
-- Duplicate 6551 events are not pushed twice.
-- Bot restart resumes Telegram polling from Redis offset.
-- `npm run test` passes.
-- `npm run typecheck` passes.
-- `npm run dev` probe remains usable as a diagnostic tool.
+- 全新机器上 `npm run db:up && npm run db:migrate` 一次成功。
+- PostgreSQL 与 Redis 健康后 `npm run bot` 启动成功。
+- Owner 在私聊发 `/start` 看到主菜单。
+- 非 owner 给 bot 发任何消息：bot 静默不回。
+- 把 bot 加入测试群：owner DM 收到推送目标卡片。
+- Owner 可启用/停用 destination。
+- Owner 可添加、列出、启用、停用、删除 Twitter source。
+- Owner 添加 website / contract source：入库成功，列表显示"worker 暂未上线"。
+- Owner 可订阅/取消订阅 destination。
+- 6551 推送的 Twitter 事件：写入 `event_logs` 并推送到订阅的 destination。
+- 投递成功/失败均写入 `delivery_logs`。
+- 同一事件短时间内被 6551 推两次：仅推送一次（dedupe）。
+- bot 重启后从 Redis offset 恢复 Telegram polling。
+- `npm run test` 全绿。
+- `npm run typecheck` 全绿。
+- `npm run dev` 老探针仍然可用。
 
-## Spec self-review
+## Spec 自审
 
-- Placeholder scan: no TBD/TODO placeholders remain.
-- Internal consistency: single-owner model, PostgreSQL source of truth, Redis runtime-only role, and Docker Compose deployment are consistent throughout.
-- Scope check: this is one implementation plan focused on Telegram control plane plus Twitter event dispatch; website/contract workers are explicitly out of scope.
-- Ambiguity check: source sharing, destination discovery, probe retention, storage roles, and deployment path are explicitly chosen.
+- Placeholder 扫描：无 TBD / TODO / 占位章节。
+- 内部一致性：单 owner 模型、PostgreSQL 唯一真相、Redis 仅运行时角色、Docker Compose 部署 — 全文一致。
+- Scope 检查：本 spec 聚焦 Telegram 控制面 + Twitter 事件分发；website / contract worker 明确不在范围。
+- 歧义检查：source 共享方式、推送目标自动发现、probe 去留、存储分工、部署路径均已明确选定。
