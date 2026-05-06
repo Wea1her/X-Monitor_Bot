@@ -202,12 +202,12 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
     const targetProfileUrl = firstFollowTargetProfileUrl(params.content);
 
     return [
-      `[OpenTwitter] ${eventType}`,
-      `Monitored account: ${account}`,
-      `Followed: ${formatFollowTargets(params.content)}`,
-      `Time: ${createdAt}`,
-      profileUrl ? `Monitored profile: ${profileUrl}` : '',
-      targetProfileUrl ? `Target profile: ${targetProfileUrl}` : ''
+      '[OpenTwitter] 新增关注',
+      `监控账号：${account}`,
+      `关注了：${formatFollowTargets(params.content)}`,
+      `时间：${createdAt}`,
+      profileUrl ? `监控主页：${profileUrl}` : '',
+      targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)
       .join('\n');
@@ -217,12 +217,12 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
     const targetProfileUrl = firstFollowTargetProfileUrl(params.content);
 
     return [
-      `[OpenTwitter] ${eventType}`,
-      `Monitored account: ${account}`,
-      `Unfollowed: ${formatFollowTargets(params.content)}`,
-      `Time: ${createdAt}`,
-      profileUrl ? `Monitored profile: ${profileUrl}` : '',
-      targetProfileUrl ? `Target profile: ${targetProfileUrl}` : ''
+      '[OpenTwitter] 取消关注',
+      `监控账号：${account}`,
+      `取关了：${formatFollowTargets(params.content)}`,
+      `时间：${createdAt}`,
+      profileUrl ? `监控主页：${profileUrl}` : '',
+      targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)
       .join('\n');
@@ -232,10 +232,10 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
 
   return [
     `[OpenTwitter] ${eventType}`,
-    `Account: ${account}`,
-    `Time: ${createdAt}`,
-    `Profile: ${profileUrl}`,
-    `Content: ${content}`
+    `账号：${account}`,
+    `时间：${createdAt}`,
+    `主页：${profileUrl}`,
+    `内容：${content}`
   ].join('\n');
 }
 
