@@ -1,9 +1,15 @@
 import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
-import type { TwitterEventMessage } from '../events.js';
-import { formatTelegramMessage } from '../events.js';
+import {
+  extractFirstFollowTarget,
+  formatTelegramMessage,
+  type MutualFollowSummary,
+  type TwitterEventMessage
+} from '../events.js';
 import { addWatchAccounts } from '../open-twitter.js';
 import { getBackoffDelayMs } from '../util/backoff.js';
+
+const FOLLOW_EVENT_TYPE = 'NEW_FOLLOWER';
 
 export interface HandleWorkerDeps {
   findSourceIdByAccount(account: string): Promise<number | null>;
@@ -13,6 +19,15 @@ export interface HandleWorkerDeps {
     dedupeKey: string;
     rawJson: unknown;
   }): Promise<{ event: { id: number } | null; deduped: boolean }>;
+  recordMutualFollow(input: {
+    sourceId: number;
+    followerAccount: string;
+    followerName?: string;
+    targetAccount: string;
+    targetName?: string;
+    targetProfileUrl?: string;
+    targetBio?: string;
+  }): Promise<MutualFollowSummary & { inserted: boolean; shouldNotify: boolean }>;
   fanOut(event: { eventLogId: number; sourceId: number; text: string }): Promise<void>;
   info?: (message: string) => void;
   warn?: (message: string) => void;
@@ -31,8 +46,8 @@ export function buildDedupeKey(message: TwitterEventMessage): string {
   return `tw:${account}:${eventType}:${digest}`;
 }
 
-export function buildEventText(message: TwitterEventMessage): string {
-  return formatTelegramMessage(message);
+export function buildEventText(message: TwitterEventMessage, mutualFollow?: MutualFollowSummary): string {
+  return formatTelegramMessage(message, mutualFollow);
 }
 
 export async function handleWorkerPayload(raw: string, deps: HandleWorkerDeps): Promise<void> {
@@ -71,6 +86,34 @@ export async function handleWorkerPayload(raw: string, deps: HandleWorkerDeps): 
     info(`event deduped: ${dedupeKey}`);
     return;
   }
+
+  if (eventType === FOLLOW_EVENT_TYPE) {
+    const target = extractFirstFollowTarget(message.params?.content);
+    if (!target) {
+      warn('NEW_FOLLOWER missing target account');
+      return;
+    }
+    const mutualFollow = await deps.recordMutualFollow({
+      sourceId,
+      followerAccount: account,
+      followerName: message.params?.twUserName,
+      targetAccount: target.account,
+      targetName: target.name,
+      targetProfileUrl: target.profileUrl,
+      targetBio: target.bio
+    });
+    if (!mutualFollow.shouldNotify) {
+      info(`mutual follow stored without notification: @${account} -> @${target.account}`);
+      return;
+    }
+    await deps.fanOut({
+      eventLogId: recorded.event.id,
+      sourceId,
+      text: buildEventText(message, mutualFollow)
+    });
+    return;
+  }
+
   await deps.fanOut({
     eventLogId: recorded.event.id,
     sourceId,

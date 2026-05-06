@@ -10,6 +10,7 @@ import { parseBotConfig } from '../config.js';
 import { createDispatcher } from '../routing/dispatcher.js';
 import { createDestinationService } from '../services/destination-service.js';
 import { createEventService } from '../services/event-service.js';
+import { createMutualFollowService } from '../services/mutual-follow-service.js';
 import { createSourceService } from '../services/source-service.js';
 import { createSubscriptionService } from '../services/subscription-service.js';
 import { getPrismaClient, disconnectPrisma } from '../store/prisma.js';
@@ -83,6 +84,7 @@ export async function main(): Promise<void> {
   const destinationService = createDestinationService(prisma);
   const subscriptionService = createSubscriptionService(prisma);
   const eventService = createEventService(prisma, redisHelpers);
+  const mutualFollowService = createMutualFollowService(prisma);
 
   const services: ServicesBundle = {
     sourceService,
@@ -302,6 +304,7 @@ export async function main(): Promise<void> {
         return source && source.enabled ? source.id : null;
       },
       recordEvent: (input) => eventService.recordEvent(input),
+      recordMutualFollow: (input) => mutualFollowService.record(input),
       fanOut: dispatcher.fanOut
     }
   });

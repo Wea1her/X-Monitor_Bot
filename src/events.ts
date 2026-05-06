@@ -29,6 +29,13 @@ export interface MutualFollowSummary {
   emphasis: MutualFollowEmphasis;
 }
 
+export interface FollowTarget {
+  account: string;
+  name?: string;
+  profileUrl?: string;
+  bio?: string;
+}
+
 const FOLLOW_EVENT_TYPE = 'NEW_FOLLOWER';
 const UNFOLLOW_EVENT_TYPE = 'NEW_UNFOLLOWER';
 
@@ -134,6 +141,42 @@ function followTargetLabel(value: Record<string, unknown>): string {
   ]);
 
   return accountLabel(account, name);
+}
+
+export function extractFirstFollowTarget(content: unknown): FollowTarget | undefined {
+  for (const record of contentRecords(content)) {
+    const account = stringValue(record, [
+      'twAccount',
+      'username',
+      'screenName',
+      'userScreenName',
+      'account'
+    ]);
+    if (!account) {
+      continue;
+    }
+
+    return {
+      account: normalizeAccount(account),
+      name: stringValue(record, [
+        'twUserName',
+        'userName',
+        'displayName',
+        'name'
+      ]),
+      profileUrl: stringValue(record, ['profileUrl', 'profileURL', 'url']),
+      bio: stringValue(record, [
+        'description',
+        'desc',
+        'bio',
+        'profileDescription',
+        'userDescription',
+        'twDescription'
+      ])
+    };
+  }
+
+  return undefined;
 }
 
 function formatFollowTargets(content: unknown): string {
