@@ -90,6 +90,7 @@ describe('sourceService.create', () => {
 
   it('marks remote watch sync success', async () => {
     const syncedAt = new Date('2026-05-06T10:00:00Z');
+    prisma.monitorSource.findUnique.mockResolvedValue(fakeRow);
     prisma.monitorSource.update.mockResolvedValue({
       ...fakeRow,
       remoteWatchStatus: 'synced',
@@ -109,7 +110,35 @@ describe('sourceService.create', () => {
     });
   });
 
+  it('rejects remote watch sync success for non-twitter source', async () => {
+    const websiteRow = {
+      ...fakeRow,
+      type: 'website',
+      target: 'https://example.com/',
+      normalizedTarget: 'https://example.com/',
+      remoteWatchStatus: 'not_applicable'
+    };
+    prisma.monitorSource.findUnique.mockResolvedValue(websiteRow);
+    prisma.monitorSource.update.mockResolvedValue(websiteRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchSynced(7)).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote watch sync success for missing source', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(null);
+    prisma.monitorSource.update.mockResolvedValue(fakeRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchSynced(7)).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
+  });
+
   it('marks remote watch sync error', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(fakeRow);
     prisma.monitorSource.update.mockResolvedValue({
       ...fakeRow,
       remoteWatchStatus: 'error',
@@ -126,6 +155,23 @@ describe('sourceService.create', () => {
         remoteWatchError: 'bad token'
       }
     });
+  });
+
+  it('rejects remote watch sync error for non-twitter source', async () => {
+    const websiteRow = {
+      ...fakeRow,
+      type: 'website',
+      target: 'https://example.com/',
+      normalizedTarget: 'https://example.com/',
+      remoteWatchStatus: 'not_applicable'
+    };
+    prisma.monitorSource.findUnique.mockResolvedValue(websiteRow);
+    prisma.monitorSource.update.mockResolvedValue(websiteRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchError(7, 'bad token')).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
   });
 
   it('returns existing source when duplicate', async () => {

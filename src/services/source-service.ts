@@ -25,6 +25,13 @@ export interface SourceService {
 }
 
 export function createSourceService(prisma: PrismaClient): SourceService {
+  async function ensureTwitterRemoteWatchSource(id: number) {
+    const source = await prisma.monitorSource.findUnique({ where: { id } });
+    if (!source || source.type !== 'twitter') {
+      throw new Error('Remote watch sync state is only supported for twitter sources');
+    }
+  }
+
   return {
     async create({ type, input }) {
       const adapter = getAdapter(type);
@@ -67,7 +74,8 @@ export function createSourceService(prisma: PrismaClient): SourceService {
     findById(id) {
       return prisma.monitorSource.findUnique({ where: { id } });
     },
-    markRemoteWatchSynced(id, syncedAt = new Date()) {
+    async markRemoteWatchSynced(id, syncedAt = new Date()) {
+      await ensureTwitterRemoteWatchSource(id);
       return prisma.monitorSource.update({
         where: { id },
         data: {
@@ -77,7 +85,8 @@ export function createSourceService(prisma: PrismaClient): SourceService {
         }
       });
     },
-    markRemoteWatchError(id, error) {
+    async markRemoteWatchError(id, error) {
+      await ensureTwitterRemoteWatchSource(id);
       return prisma.monitorSource.update({
         where: { id },
         data: {
