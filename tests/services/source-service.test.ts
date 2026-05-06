@@ -16,6 +16,9 @@ const fakeRow = {
   normalizedTarget: 'elonmusk',
   configJson: {},
   enabled: true,
+  remoteWatchStatus: 'pending',
+  remoteWatchError: null,
+  remoteWatchSyncedAt: null,
   createdAt: new Date('2026-05-05'),
   updatedAt: new Date('2026-05-05')
 };
