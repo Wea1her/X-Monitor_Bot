@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addWatchAccounts, buildWatchAddPayload } from '../src/open-twitter.js';
+import {
+  addWatchAccount,
+  addWatchAccounts,
+  buildWatchAddPayload,
+  deleteWatchAccount
+} from '../src/open-twitter.js';
 
 describe('buildWatchAddPayload', () => {
   it('enables new follow and unfollow observation for a username', () => {
@@ -79,5 +84,96 @@ describe('addWatchAccounts', () => {
     expect(warnMock).toHaveBeenCalledWith(
       'watch-add failed for @bad: 500 server error'
     );
+  });
+});
+
+describe('addWatchAccount', () => {
+  it('returns synced when watch-add succeeds', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"success":true}'
+    });
+
+    const result = await addWatchAccount({
+      token: 'token-123',
+      account: 'elonmusk',
+      fetch: fetchMock
+    });
+
+    expect(result).toEqual({ ok: true, alreadyExists: false });
+    expect(fetchMock).toHaveBeenCalledWith('https://ai.6551.io/open/twitter_watch_add', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token-123',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(buildWatchAddPayload('elonmusk'))
+    });
+  });
+
+  it('treats already-in-watch-list as success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => '{"error":"该Twitter账号已在监控列表中","success":false}'
+    });
+
+    await expect(addWatchAccount({ token: 'token-123', account: 'elonmusk', fetch: fetchMock })).resolves.toEqual({
+      ok: true,
+      alreadyExists: true
+    });
+  });
+
+  it('returns an error for unexpected watch-add failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'server error'
+    });
+
+    await expect(addWatchAccount({ token: 'token-123', account: 'bad', fetch: fetchMock })).resolves.toEqual({
+      ok: false,
+      error: 'watch-add failed for @bad: 500 server error'
+    });
+  });
+});
+
+describe('deleteWatchAccount', () => {
+  it('posts username to twitter_watch_delete', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"success":true}'
+    });
+
+    const result = await deleteWatchAccount({
+      token: 'token-123',
+      account: 'elonmusk',
+      fetch: fetchMock
+    });
+
+    expect(result).toEqual({ ok: true, alreadyMissing: false });
+    expect(fetchMock).toHaveBeenCalledWith('https://ai.6551.io/open/twitter_watch_delete', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token-123',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username: 'elonmusk' })
+    });
+  });
+
+  it('treats missing remote watch as delete success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => '{"error":"该Twitter账号不在监控列表中","success":false}'
+    });
+
+    await expect(deleteWatchAccount({ token: 'token-123', account: 'elonmusk', fetch: fetchMock })).resolves.toEqual({
+      ok: true,
+      alreadyMissing: true
+    });
   });
 });
