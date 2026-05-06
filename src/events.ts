@@ -151,6 +151,24 @@ function firstFollowTargetProfileUrl(content: unknown): string | undefined {
   return undefined;
 }
 
+function firstFollowTargetBio(content: unknown): string | undefined {
+  for (const record of contentRecords(content)) {
+    const bio = stringValue(record, [
+      'description',
+      'desc',
+      'bio',
+      'profileDescription',
+      'userDescription',
+      'twDescription'
+    ]);
+    if (bio) {
+      return bio;
+    }
+  }
+
+  return undefined;
+}
+
 export function previewContent(content: unknown, maxLength = 240): string {
   if (content === undefined || content === null) {
     return '';
@@ -200,13 +218,13 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
 
   if (eventType === FOLLOW_EVENT_TYPE) {
     const targetProfileUrl = firstFollowTargetProfileUrl(params.content);
+    const targetBio = firstFollowTargetBio(params.content);
 
     return [
       '[OpenTwitter] 新增关注',
       `监控账号：${account}`,
       `关注了：${formatFollowTargets(params.content)}`,
-      `时间：${createdAt}`,
-      profileUrl ? `监控主页：${profileUrl}` : '',
+      targetBio ? `简介：${targetBio}` : '',
       targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)
@@ -215,13 +233,13 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
 
   if (eventType === UNFOLLOW_EVENT_TYPE) {
     const targetProfileUrl = firstFollowTargetProfileUrl(params.content);
+    const targetBio = firstFollowTargetBio(params.content);
 
     return [
       '[OpenTwitter] 取消关注',
       `监控账号：${account}`,
       `取关了：${formatFollowTargets(params.content)}`,
-      `时间：${createdAt}`,
-      profileUrl ? `监控主页：${profileUrl}` : '',
+      targetBio ? `简介：${targetBio}` : '',
       targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)

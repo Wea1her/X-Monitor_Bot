@@ -40,6 +40,7 @@ const followEvent = {
         twAccount: 'bob',
         twUserName: 'Bob Builder',
         profileUrl: 'https://twitter.com/bob',
+        description: 'Building useful things.',
         followerCount: 1234
       }
     ]
@@ -60,7 +61,8 @@ const unfollowEvent = {
       {
         twAccount: 'charlie',
         twUserName: 'Charlie',
-        profileUrl: 'https://twitter.com/charlie'
+        profileUrl: 'https://twitter.com/charlie',
+        bio: 'Independent researcher.'
       }
     ]
   }
@@ -116,8 +118,7 @@ describe('event formatting', () => {
         '[OpenTwitter] 新增关注',
         '监控账号：@alice (Alice)',
         '关注了：@bob (Bob Builder)',
-        '时间：2026-04-27T03:04:05Z',
-        '监控主页：https://twitter.com/alice',
+        '简介：Building useful things.',
         '目标主页：https://twitter.com/bob'
       ].join('\n')
     );
@@ -129,8 +130,7 @@ describe('event formatting', () => {
         '[OpenTwitter] 取消关注',
         '监控账号：@alice (Alice)',
         '取关了：@charlie (Charlie)',
-        '时间：2026-04-27T05:06:07Z',
-        '监控主页：https://twitter.com/alice',
+        '简介：Independent researcher.',
         '目标主页：https://twitter.com/charlie'
       ].join('\n')
     );
