@@ -11,6 +11,8 @@ export interface CreateSourceResult {
   alreadyExisted: boolean;
 }
 
+export type RemoteWatchStatus = 'pending' | 'synced' | 'error' | 'not_applicable';
+
 export interface SourceService {
   create(input: CreateSourceInput): Promise<CreateSourceResult>;
   list(): Promise<MonitorSource[]>;
@@ -18,6 +20,8 @@ export interface SourceService {
   remove(id: number): Promise<void>;
   listEnabledTwitterSources(): Promise<MonitorSource[]>;
   findById(id: number): Promise<MonitorSource | null>;
+  markRemoteWatchSynced(id: number, syncedAt?: Date): Promise<MonitorSource>;
+  markRemoteWatchError(id: number, error: string): Promise<MonitorSource>;
 }
 
 export function createSourceService(prisma: PrismaClient): SourceService {
@@ -37,7 +41,10 @@ export function createSourceService(prisma: PrismaClient): SourceService {
           target: normalized.target,
           normalizedTarget: normalized.normalizedTarget,
           configJson: normalized.configJson as Prisma.InputJsonValue,
-          enabled: true
+          enabled: true,
+          remoteWatchStatus: type === 'twitter' ? 'pending' : 'not_applicable',
+          remoteWatchError: null,
+          remoteWatchSyncedAt: null
         }
       });
       return { source: created, alreadyExisted: false };
@@ -59,6 +66,25 @@ export function createSourceService(prisma: PrismaClient): SourceService {
     },
     findById(id) {
       return prisma.monitorSource.findUnique({ where: { id } });
+    },
+    markRemoteWatchSynced(id, syncedAt = new Date()) {
+      return prisma.monitorSource.update({
+        where: { id },
+        data: {
+          remoteWatchStatus: 'synced',
+          remoteWatchError: null,
+          remoteWatchSyncedAt: syncedAt
+        }
+      });
+    },
+    markRemoteWatchError(id, error) {
+      return prisma.monitorSource.update({
+        where: { id },
+        data: {
+          remoteWatchStatus: 'error',
+          remoteWatchError: error
+        }
+      });
     }
   };
 }
