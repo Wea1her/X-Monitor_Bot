@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildSubscribeMessage,
   buildWebSocketUrl,
-  getReconnectDelayMs,
   handleWebSocketPayload
 } from '../src/probe.js';
+import { getBackoffDelayMs } from '../src/util/backoff.js';
 
 describe('probe helpers', () => {
   it('builds the authenticated WebSocket URL', () => {
@@ -23,10 +23,13 @@ describe('probe helpers', () => {
     );
   });
 
-  it('caps exponential reconnect delay at 30 seconds', () => {
-    expect(getReconnectDelayMs(0)).toBe(1000);
-    expect(getReconnectDelayMs(1)).toBe(2000);
-    expect(getReconnectDelayMs(10)).toBe(30000);
+  it('returns a delay within the jittered backoff window', () => {
+    const d0 = getBackoffDelayMs(0);
+    expect(d0).toBeGreaterThanOrEqual(800);
+    expect(d0).toBeLessThanOrEqual(1200);
+    const dHigh = getBackoffDelayMs(20);
+    expect(dHigh).toBeGreaterThanOrEqual(24_000);
+    expect(dHigh).toBeLessThanOrEqual(36_000);
   });
 });
 
