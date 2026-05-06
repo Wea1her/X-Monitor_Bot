@@ -137,6 +137,20 @@ describe('addWatchAccount', () => {
       error: 'watch-add failed for @bad: 500 server error'
     });
   });
+
+  it('does not treat a 500 already-in-watch-list response as success', async () => {
+    const body = '{"error":"该Twitter账号已在监控列表中","success":false}';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => body
+    });
+
+    await expect(addWatchAccount({ token: 'token-123', account: 'elonmusk', fetch: fetchMock })).resolves.toEqual({
+      ok: false,
+      error: `watch-add failed for @elonmusk: 500 ${body}`
+    });
+  });
 });
 
 describe('deleteWatchAccount', () => {
@@ -174,6 +188,20 @@ describe('deleteWatchAccount', () => {
     await expect(deleteWatchAccount({ token: 'token-123', account: 'elonmusk', fetch: fetchMock })).resolves.toEqual({
       ok: true,
       alreadyMissing: true
+    });
+  });
+
+  it('does not treat a 500 missing-watch response as success', async () => {
+    const body = '{"error":"该Twitter账号不在监控列表中","success":false}';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => body
+    });
+
+    await expect(deleteWatchAccount({ token: 'token-123', account: 'elonmusk', fetch: fetchMock })).resolves.toEqual({
+      ok: false,
+      error: `watch-delete failed for @elonmusk: 500 ${body}`
     });
   });
 });

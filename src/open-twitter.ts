@@ -56,10 +56,6 @@ export function buildWatchAddPayload(username: string): WatchAddPayload {
   };
 }
 
-function includesAny(value: string, patterns: string[]): boolean {
-  return patterns.some((pattern) => value.includes(pattern));
-}
-
 export async function addWatchAccount(options: WatchMutationOptions): Promise<AddWatchAccountResult> {
   const fetchImpl = options.fetch ?? fetch;
   const account = options.account.trim().replace(/^@+/, '');
@@ -76,7 +72,7 @@ export async function addWatchAccount(options: WatchMutationOptions): Promise<Ad
     if (response.ok) {
       return { ok: true, alreadyExists: false };
     }
-    if (includesAny(body, ['已在监控列表中', 'already'])) {
+    if (response.status === 400 && body.includes('该Twitter账号已在监控列表中')) {
       return { ok: true, alreadyExists: true };
     }
     return { ok: false, error: `watch-add failed for @${account}: ${response.status} ${body}` };
@@ -104,7 +100,7 @@ export async function deleteWatchAccount(options: WatchMutationOptions): Promise
     if (response.ok) {
       return { ok: true, alreadyMissing: false };
     }
-    if (includesAny(body, ['不在监控列表中', '不存在', 'not in', 'not found', 'missing'])) {
+    if (response.status === 400 && body.includes('该Twitter账号不在监控列表中')) {
       return { ok: true, alreadyMissing: true };
     }
     return { ok: false, error: `watch-delete failed for @${account}: ${response.status} ${body}` };
