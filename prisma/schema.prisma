@@ -51,6 +51,7 @@ model Subscription {
   destination   Destination   @relation(fields: [destinationId], references: [id], onDelete: Cascade)
 
   @@unique([sourceId, destinationId])
+  @@index([destinationId])
   @@map("subscriptions")
 }
 
@@ -82,5 +83,6 @@ model DeliveryLog {
   destination   Destination  @relation(fields: [destinationId], references: [id], onDelete: Cascade)
 
   @@index([destinationId, sentAt])
+  @@index([eventLogId])
   @@map("delivery_logs")
 }
