@@ -21,6 +21,21 @@ export interface NdjsonEntry {
   message: TwitterEventMessage;
 }
 
+export type MutualFollowEmphasis = 'none' | 'warming' | 'hot';
+
+export interface MutualFollowSummary {
+  total: number;
+  accounts: Array<{ account: string; name?: string }>;
+  emphasis: MutualFollowEmphasis;
+}
+
+export interface FollowTarget {
+  account: string;
+  name?: string;
+  profileUrl?: string;
+  bio?: string;
+}
+
 const FOLLOW_EVENT_TYPE = 'NEW_FOLLOWER';
 const UNFOLLOW_EVENT_TYPE = 'NEW_UNFOLLOWER';
 
@@ -128,6 +143,42 @@ function followTargetLabel(value: Record<string, unknown>): string {
   return accountLabel(account, name);
 }
 
+export function extractFirstFollowTarget(content: unknown): FollowTarget | undefined {
+  for (const record of contentRecords(content)) {
+    const account = stringValue(record, [
+      'twAccount',
+      'username',
+      'screenName',
+      'userScreenName',
+      'account'
+    ]);
+    if (!account) {
+      continue;
+    }
+
+    return {
+      account: normalizeAccount(account),
+      name: stringValue(record, [
+        'twUserName',
+        'userName',
+        'displayName',
+        'name'
+      ]),
+      profileUrl: stringValue(record, ['profileUrl', 'profileURL', 'url']),
+      bio: stringValue(record, [
+        'description',
+        'desc',
+        'bio',
+        'profileDescription',
+        'userDescription',
+        'twDescription'
+      ])
+    };
+  }
+
+  return undefined;
+}
+
 function formatFollowTargets(content: unknown): string {
   const records = contentRecords(content);
   const labels = records.map(followTargetLabel).filter((label) => label !== '@unknown');
@@ -167,6 +218,31 @@ function firstFollowTargetBio(content: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function mutualFollowLine(summary: MutualFollowSummary | undefined): string {
+  if (!summary || summary.total < 2) {
+    return '';
+  }
+
+  const displayed = summary.accounts
+    .slice(0, 10)
+    .map((account) => `@${normalizeAccount(account.account)}`);
+  const suffix = summary.total > 10 ? ' 等' : '';
+  return `共同关注：${summary.total} 个（${displayed.join('、')}${suffix}）`;
+}
+
+function emphasisLine(summary: MutualFollowSummary | undefined): string {
+  if (!summary) {
+    return '';
+  }
+  if (summary.emphasis === 'warming') {
+    return '提示：共同关注升温';
+  }
+  if (summary.emphasis === 'hot') {
+    return '提示：高共同关注';
+  }
+  return '';
 }
 
 export function previewContent(content: unknown, maxLength = 240): string {
@@ -209,7 +285,10 @@ export function formatConsoleSummary(message: TwitterEventMessage): string {
   return `[${eventType}] ${account} ${createdAt}${preview ? ` ${preview}` : ''}`;
 }
 
-export function formatTelegramMessage(message: TwitterEventMessage): string {
+export function formatTelegramMessage(
+  message: TwitterEventMessage,
+  mutualFollow?: MutualFollowSummary
+): string {
   const params = message.params ?? {};
   const eventType = params.eventType ?? 'UNKNOWN_EVENT';
   const account = accountLabel(params.twAccount, params.twUserName);
@@ -225,6 +304,8 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
       `监控账号：${account}`,
       `关注了：${formatFollowTargets(params.content)}`,
       targetBio ? `简介：${targetBio}` : '',
+      mutualFollowLine(mutualFollow),
+      emphasisLine(mutualFollow),
       targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)

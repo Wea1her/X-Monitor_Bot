@@ -19,6 +19,25 @@ const evt = {
   }
 };
 
+const followEvt = {
+  jsonrpc: '2.0',
+  method: 'twitter.event',
+  params: {
+    twAccount: 'alice',
+    twUserName: 'Alice',
+    eventType: 'NEW_FOLLOWER',
+    createdAt: '2026-05-05T01:02:03Z',
+    content: [
+      {
+        twAccount: 'target',
+        twUserName: 'Target',
+        profileUrl: 'https://twitter.com/target',
+        description: 'Target bio'
+      }
+    ]
+  }
+};
+
 describe('buildDedupeKey', () => {
   it('uses content.id when present', () => {
     expect(buildDedupeKey(evt)).toBe('tw:elonmusk:NEW_TWEET:tweet-1');
@@ -43,6 +62,16 @@ describe('handleWorkerPayload', () => {
     return {
       findSourceIdByAccount: vi.fn().mockResolvedValue(10),
       recordEvent: vi.fn().mockResolvedValue({ event: { id: 50 }, deduped: false }),
+      recordMutualFollow: vi.fn().mockResolvedValue({
+        inserted: true,
+        total: 2,
+        accounts: [
+          { account: 'alice', name: 'Alice' },
+          { account: 'bob', name: 'Bob' }
+        ],
+        emphasis: 'none',
+        shouldNotify: true
+      }),
       fanOut: vi.fn().mockResolvedValue(undefined),
       info: vi.fn(),
       warn: vi.fn(),
@@ -67,6 +96,53 @@ describe('handleWorkerPayload', () => {
     });
     await handleWorkerPayload(JSON.stringify(evt), deps);
     expect(deps.fanOut).not.toHaveBeenCalled();
+  });
+
+  it('stores first mutual follow without dispatching', async () => {
+    const deps = makeDeps({
+      recordMutualFollow: vi.fn().mockResolvedValue({
+        inserted: true,
+        total: 1,
+        accounts: [{ account: 'alice', name: 'Alice' }],
+        emphasis: 'none',
+        shouldNotify: false
+      })
+    });
+
+    await handleWorkerPayload(JSON.stringify(followEvt), deps);
+
+    expect(deps.recordMutualFollow).toHaveBeenCalledWith({
+      sourceId: 10,
+      followerAccount: 'alice',
+      followerName: 'Alice',
+      targetAccount: 'target',
+      targetName: 'Target',
+      targetProfileUrl: 'https://twitter.com/target',
+      targetBio: 'Target bio'
+    });
+    expect(deps.fanOut).not.toHaveBeenCalled();
+  });
+
+  it('dispatches follow event when mutual follow threshold is reached', async () => {
+    const deps = makeDeps();
+
+    await handleWorkerPayload(JSON.stringify(followEvt), deps);
+
+    expect(deps.fanOut).toHaveBeenCalledWith({
+      eventLogId: 50,
+      sourceId: 10,
+      text: expect.stringContaining('共同关注：2 个')
+    });
+  });
+
+  it('does not record mutual follow when event was deduped', async () => {
+    const deps = makeDeps({
+      recordEvent: vi.fn().mockResolvedValue({ event: null, deduped: true })
+    });
+
+    await handleWorkerPayload(JSON.stringify(followEvt), deps);
+
+    expect(deps.recordMutualFollow).not.toHaveBeenCalled();
   });
 
   it('skips dispatch when no matching source', async () => {

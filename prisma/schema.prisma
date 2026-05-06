@@ -19,6 +19,7 @@ model MonitorSource {
 
   subscriptions     Subscription[]
   events            EventLog[]
+  mutualFollows     MutualFollow[]
 
   @@unique([type, normalizedTarget])
   @@map("monitor_sources")
@@ -85,4 +86,24 @@ model DeliveryLog {
   @@index([destinationId, sentAt])
   @@index([eventLogId])
   @@map("delivery_logs")
+}
+
+model MutualFollow {
+  id               Int            @id @default(autoincrement())
+  targetAccount    String         @map("target_account")
+  targetName       String?        @map("target_name")
+  targetProfileUrl String?        @map("target_profile_url")
+  targetBio        String?        @map("target_bio")
+  followerAccount  String         @map("follower_account")
+  followerName     String?        @map("follower_name")
+  sourceId         Int?           @map("source_id")
+  firstSeenAt      DateTime       @default(now()) @map("first_seen_at")
+  lastSeenAt       DateTime       @updatedAt @map("last_seen_at")
+
+  source           MonitorSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([targetAccount, followerAccount])
+  @@index([targetAccount, lastSeenAt])
+  @@index([sourceId])
+  @@map("mutual_follows")
 }

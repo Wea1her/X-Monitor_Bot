@@ -124,6 +124,44 @@ describe('event formatting', () => {
     );
   });
 
+  it('formats mutual follow summary with emphasis', () => {
+    expect(
+      formatTelegramMessage(followEvent, {
+        total: 3,
+        accounts: [
+          { account: 'a', name: 'A' },
+          { account: 'b', name: 'B' },
+          { account: 'c', name: 'C' }
+        ],
+        emphasis: 'warming'
+      })
+    ).toBe(
+      [
+        '[OpenTwitter] 新增关注',
+        '监控账号：@alice (Alice)',
+        '关注了：@bob (Bob Builder)',
+        '简介：Building useful things.',
+        '共同关注：3 个（@a、@b、@c）',
+        '提示：共同关注升温',
+        '目标主页：https://twitter.com/bob'
+      ].join('\n')
+    );
+  });
+
+  it('limits mutual follow account display to ten handles', () => {
+    const accounts = Array.from({ length: 11 }, (_, index) => ({ account: `user${index + 1}` }));
+    const message = formatTelegramMessage(followEvent, {
+      total: 11,
+      accounts,
+      emphasis: 'hot'
+    });
+
+    expect(message).toContain(
+      '共同关注：11 个（@user1、@user2、@user3、@user4、@user5、@user6、@user7、@user8、@user9、@user10 等）'
+    );
+    expect(message).toContain('提示：高共同关注');
+  });
+
   it('formats a monitored account unfollow event clearly in Chinese', () => {
     expect(formatTelegramMessage(unfollowEvent)).toBe(
       [
