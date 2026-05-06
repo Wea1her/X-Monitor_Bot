@@ -21,6 +21,14 @@ export interface NdjsonEntry {
   message: TwitterEventMessage;
 }
 
+export type MutualFollowEmphasis = 'none' | 'warming' | 'hot';
+
+export interface MutualFollowSummary {
+  total: number;
+  accounts: Array<{ account: string; name?: string }>;
+  emphasis: MutualFollowEmphasis;
+}
+
 const FOLLOW_EVENT_TYPE = 'NEW_FOLLOWER';
 const UNFOLLOW_EVENT_TYPE = 'NEW_UNFOLLOWER';
 
@@ -169,6 +177,31 @@ function firstFollowTargetBio(content: unknown): string | undefined {
   return undefined;
 }
 
+function mutualFollowLine(summary: MutualFollowSummary | undefined): string {
+  if (!summary || summary.total < 2) {
+    return '';
+  }
+
+  const displayed = summary.accounts
+    .slice(0, 10)
+    .map((account) => `@${normalizeAccount(account.account)}`);
+  const suffix = summary.total > 10 ? ' 等' : '';
+  return `共同关注：${summary.total} 个（${displayed.join('、')}${suffix}）`;
+}
+
+function emphasisLine(summary: MutualFollowSummary | undefined): string {
+  if (!summary) {
+    return '';
+  }
+  if (summary.emphasis === 'warming') {
+    return '提示：共同关注升温';
+  }
+  if (summary.emphasis === 'hot') {
+    return '提示：高共同关注';
+  }
+  return '';
+}
+
 export function previewContent(content: unknown, maxLength = 240): string {
   if (content === undefined || content === null) {
     return '';
@@ -209,7 +242,10 @@ export function formatConsoleSummary(message: TwitterEventMessage): string {
   return `[${eventType}] ${account} ${createdAt}${preview ? ` ${preview}` : ''}`;
 }
 
-export function formatTelegramMessage(message: TwitterEventMessage): string {
+export function formatTelegramMessage(
+  message: TwitterEventMessage,
+  mutualFollow?: MutualFollowSummary
+): string {
   const params = message.params ?? {};
   const eventType = params.eventType ?? 'UNKNOWN_EVENT';
   const account = accountLabel(params.twAccount, params.twUserName);
@@ -225,6 +261,8 @@ export function formatTelegramMessage(message: TwitterEventMessage): string {
       `监控账号：${account}`,
       `关注了：${formatFollowTargets(params.content)}`,
       targetBio ? `简介：${targetBio}` : '',
+      mutualFollowLine(mutualFollow),
+      emphasisLine(mutualFollow),
       targetProfileUrl ? `目标主页：${targetProfileUrl}` : ''
     ]
       .filter((line) => line.length > 0)
