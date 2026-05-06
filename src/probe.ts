@@ -9,6 +9,7 @@ import {
   type TwitterEventMessage
 } from './events.js';
 import { sendTelegramMessage as sendTelegramMessageImpl } from './telegram.js';
+import { getBackoffDelayMs } from './util/backoff.js';
 
 export interface HandlePayloadDeps {
   logDir: string;
@@ -34,10 +35,6 @@ export function buildSubscribeMessage(): string {
     id: 1,
     method: 'twitter.subscribe'
   });
-}
-
-export function getReconnectDelayMs(attempt: number): number {
-  return Math.min(30_000, 1000 * 2 ** attempt);
 }
 
 const FOLLOW_EVENT_TYPES = new Set(['NEW_FOLLOWER', 'NEW_UNFOLLOWER']);
@@ -137,7 +134,7 @@ export function startWebSocketProbe(config: AppConfig): () => void {
       if (closedByUser) {
         return;
       }
-      const delay = getReconnectDelayMs(reconnectAttempt);
+      const delay = getBackoffDelayMs(reconnectAttempt);
       reconnectAttempt += 1;
       console.warn(`OpenTwitter WSS disconnected, reconnecting in ${delay}ms`);
       reconnectTimer = setTimeout(connect, delay);

@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MonitorSource {
+  id                Int                @id @default(autoincrement())
+  type              String
+  target            String
+  normalizedTarget  String             @map("normalized_target")
+  configJson        Json               @map("config_json")
+  enabled           Boolean            @default(true)
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt      @map("updated_at")
+
+  subscriptions     Subscription[]
+  events            EventLog[]
+
+  @@unique([type, normalizedTarget])
+  @@map("monitor_sources")
+}
+
+model Destination {
+  id              Int            @id @default(autoincrement())
+  telegramChatId  String         @unique @map("telegram_chat_id")
+  type            String
+  title           String?
+  username        String?
+  enabled         Boolean        @default(true)
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt      @map("updated_at")
+
+  subscriptions   Subscription[]
+  deliveries      DeliveryLog[]
+
+  @@map("destinations")
+}
+
+model Subscription {
+  id            Int           @id @default(autoincrement())
+  sourceId      Int           @map("source_id")
+  destinationId Int           @map("destination_id")
+  enabled       Boolean       @default(true)
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  source        MonitorSource @relation(fields: [sourceId],      references: [id], onDelete: Cascade)
+  destination   Destination   @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, destinationId])
+  @@index([destinationId])
+  @@map("subscriptions")
+}
+
+model EventLog {
+  id          Int             @id @default(autoincrement())
+  sourceId    Int?            @map("source_id")
+  eventType   String          @map("event_type")
+  dedupeKey   String?         @unique @map("dedupe_key")
+  rawJson     Json            @map("raw_json")
+  occurredAt  DateTime?       @map("occurred_at")
+  receivedAt  DateTime        @default(now()) @map("received_at")
+
+  source      MonitorSource?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  deliveries  DeliveryLog[]
+
+  @@index([sourceId, receivedAt])
+  @@map("event_logs")
+}
+
+model DeliveryLog {
+  id            Int          @id @default(autoincrement())
+  eventLogId    Int?         @map("event_log_id")
+  destinationId Int          @map("destination_id")
+  status        String
+  error         String?
+  sentAt        DateTime?    @map("sent_at")
+
+  event         EventLog?    @relation(fields: [eventLogId],    references: [id], onDelete: SetNull)
+  destination   Destination  @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@index([destinationId, sentAt])
+  @@index([eventLogId])
+  @@map("delivery_logs")
+}

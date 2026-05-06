@@ -1,76 +1,60 @@
 # X Monitor Bot
 
-OpenTwitter WSS 关注监控机器人。维护一个 `WATCH_ACCOUNTS` 监控列表，当列表里的账号主动关注了别人时，程序通过 6551 WSS 实时接收 `NEW_FOLLOWER` 事件，并推送到 Telegram、控制台和本地日志。
+OpenTwitter 6551 + Telegram 监控控制面。
 
-## 配置
+## 两条命令
+
+- `npm run dev` — 老 OpenTwitter WSS 探针，仅诊断 6551 通道连通性，不依赖 PG / Redis。
+- `npm run bot` — Telegram 控制面 bot（生产入口）：DM 私聊驱动、PG/Redis 持久化、Twitter 事件分发。
+
+## 准备
 
 ```bash
 cp .env.example .env
-```
-
-编辑 `.env`：
-
-```env
-TWITTER_TOKEN=your_6551_token
-WATCH_ACCOUNTS=elonmusk,VitalikButerin
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-LOG_DIR=logs
-```
-
-`TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 为空时不会推送 Telegram，只会打印控制台并写本地日志。
-
-`WATCH_ACCOUNTS` 就是要监控“主动关注行为”的账号列表。例如：
-
-```env
-WATCH_ACCOUNTS=alice,bob
-```
-
-表示监控 `@alice` 和 `@bob`，当他们主动关注其他账号时触发通知。
-
-## 运行
-
-```bash
+# 填写：TELEGRAM_BOT_TOKEN / OWNER_USER_IDS / TWITTER_TOKEN
 npm install
-npm run dev
+npm run db:up
+npm run db:migrate
 ```
 
-启动时程序会调用 6551 的 `twitter_watch_add`，只开启 `newFlwBol`，确保监控目标账号的新增关注行为。随后连接：
-
-```text
-wss://ai.6551.io/open/twitter_wss
-```
-
-并订阅 `twitter.subscribe`。
-
-收到事件后，本项目只处理：
-
-```text
-method = twitter.event
-eventType = NEW_FOLLOWER
-params.twAccount = 监控列表中的账号
-params.content = 被这个账号新关注的人
-```
-
-Telegram 消息会显示为“监控账号 followed 目标账号”。
-
-事件日志写入：
-
-```text
-logs/twitter-events.ndjson
-```
-
-每行包含本地接收时间和 6551 推送的完整 JSON-RPC 消息。
-
-WSS 订阅可能会返回当前 token 下整个 6551 watch list 的事件流。本项目会在本地按 `.env` 中的 `WATCH_ACCOUNTS` 过滤，并丢弃非 `NEW_FOLLOWER` 事件。
-
-## 验证
+## 启动 bot
 
 ```bash
-npm test
+npm run bot
+```
+
+启动后在 Telegram 私聊向 bot 发 `/start`，按按钮配置：
+
+1. ➕ 添加监控 → 选择 Twitter → 输入用户名（不带 @）
+2. 把 bot 拉进群/频道：bot 会在 DM 自动通知“新推送目标”
+3. 启用该目标 → 监控源详情里点击“➕ 订阅推送目标”
+4. 勾选目标 → 完成
+
+## 监控类型
+
+| 类型 | 第一阶段状态 |
+|---|---|
+| `twitter` | ✅ 真实接 6551 WSS，事件即时推送 |
+| `website` | ⚠️ 仅入库，worker 暂未上线 |
+| `contract` | ⚠️ 仅入库，worker 暂未上线 |
+
+## 已知约束
+
+- 6551 关注/取关事件需要被监控账号粉丝数 > 5000。
+- bot 第一阶段仅 long polling，未实现 webhook。
+
+## 测试
+
+```bash
+npm run test:unit       # 不依赖 docker
+npm test                # 包含集成测，需要 docker 起来
 npm run typecheck
 ```
 
-## 当前边界
+## 老探针（诊断用）
 
-本项目依赖 6551 WSS 推送 `NEW_FOLLOWER`。断线期间是否补发由 6551 服务端决定；本地日志会保留已收到的原始事件，便于之后核对。
+```bash
+npm run dev
+```
+
+仅当排查“6551 是否还能正常推 WSS”时使用。它只读 `.env` 中的 `WATCH_ACCOUNTS` / `TELEGRAM_CHAT_ID` / `LOG_DIR`，不读 PG。

@@ -40,7 +40,29 @@ const followEvent = {
         twAccount: 'bob',
         twUserName: 'Bob Builder',
         profileUrl: 'https://twitter.com/bob',
+        description: 'Building useful things.',
         followerCount: 1234
+      }
+    ]
+  }
+};
+
+const unfollowEvent = {
+  jsonrpc: '2.0',
+  method: 'twitter.event',
+  params: {
+    id: 789,
+    twAccount: 'alice',
+    twUserName: 'Alice',
+    profileUrl: 'https://twitter.com/alice',
+    eventType: 'NEW_UNFOLLOWER',
+    createdAt: '2026-04-27T05:06:07Z',
+    content: [
+      {
+        twAccount: 'charlie',
+        twUserName: 'Charlie',
+        profileUrl: 'https://twitter.com/charlie',
+        bio: 'Independent researcher.'
       }
     ]
   }
@@ -73,9 +95,15 @@ describe('event formatting', () => {
   });
 
   it('formats a Telegram message', () => {
-    expect(formatTelegramMessage(tweetEvent)).toContain('[OpenTwitter] NEW_TWEET');
-    expect(formatTelegramMessage(tweetEvent)).toContain('Account: @elonmusk (Elon Musk)');
-    expect(formatTelegramMessage(tweetEvent)).toContain('Profile: https://twitter.com/elonmusk');
+    expect(formatTelegramMessage(tweetEvent)).toBe(
+      [
+        '[OpenTwitter] NEW_TWEET',
+        '账号：@elonmusk (Elon Musk)',
+        '时间：2026-04-27T01:02:03Z',
+        '主页：https://twitter.com/elonmusk',
+        '内容：This is a long tweet body for preview testing | id=tweet-1 | user=elonmusk | url=https://example.com/post'
+      ].join('\n')
+    );
   });
 
   it('formats a monitored account follow event clearly', () => {
@@ -85,10 +113,27 @@ describe('event formatting', () => {
 
     const telegramMessage = formatTelegramMessage(followEvent);
 
-    expect(telegramMessage).toContain('[OpenTwitter] NEW_FOLLOWER');
-    expect(telegramMessage).toContain('Monitored account: @alice (Alice)');
-    expect(telegramMessage).toContain('Followed: @bob (Bob Builder)');
-    expect(telegramMessage).toContain('Target profile: https://twitter.com/bob');
+    expect(telegramMessage).toBe(
+      [
+        '[OpenTwitter] 新增关注',
+        '监控账号：@alice (Alice)',
+        '关注了：@bob (Bob Builder)',
+        '简介：Building useful things.',
+        '目标主页：https://twitter.com/bob'
+      ].join('\n')
+    );
+  });
+
+  it('formats a monitored account unfollow event clearly in Chinese', () => {
+    expect(formatTelegramMessage(unfollowEvent)).toBe(
+      [
+        '[OpenTwitter] 取消关注',
+        '监控账号：@alice (Alice)',
+        '取关了：@charlie (Charlie)',
+        '简介：Independent researcher.',
+        '目标主页：https://twitter.com/charlie'
+      ].join('\n')
+    );
   });
 
   it('wraps raw messages in an NDJSON entry with receive time', () => {
