@@ -25,6 +25,7 @@
 - `website` 和 `contract` 类型不调用 6551。
 - 6551 同步失败时不回滚本地数据库；bot 回复中提示“本地已添加，但 6551 同步失败”，方便 owner 后续重试或重启 bot。
 - 停用或删除时，如果 6551 删除失败，不修改本地状态，并回复同步失败原因，避免界面显示已停用/已删除但远端仍在消耗 token。
+- 数据库保存 6551 同步状态，避免本地状态和远端监控状态不一致时不可见。
 
 ## 组件变更
 
@@ -39,6 +40,16 @@
 
 批量启动同步仍应逐账号继续，不因单个账号失败中断 worker 启动。
 
+### `prisma/schema.prisma`
+
+在 `MonitorSource` 上保存最小 6551 同步状态：
+
+- `remoteWatchStatus`：`synced` / `pending` / `error` / `not_applicable`。
+- `remoteWatchError`：最近一次同步失败原因。
+- `remoteWatchSyncedAt`：最近一次确认远端状态满足本地期望的时间。
+
+该状态只表示本地最后一次调用 6551 的结果，不作为 6551 远端列表的完整镜像。
+
 ### `src/bot/handlers/add-source.ts`
 
 `performAddSource()` 增加一个可选的 watch registrar 依赖。流程如下：
@@ -48,7 +59,8 @@
 3. 如果新建的是 `twitter`，调用 watch registrar 注册 `source.normalizedTarget`。
 4. 如果注册成功或 6551 已存在，回复“已添加，并已同步到 6551 监控”。
 5. 如果注册失败，回复“已添加，但 6551 同步失败：<原因>”。
-6. 非 Twitter 类型保留现有 worker 未上线提示。
+6. 新建 Twitter 但注册失败时，本地 source 保留为 `enabled=true`，`remoteWatchStatus=error`，便于 owner 在列表里看到并重试。
+7. 非 Twitter 类型保留现有 worker 未上线提示，并设置 `remoteWatchStatus=not_applicable`。
 
 ### `src/bot/handlers/source-actions.ts`
 
@@ -58,6 +70,8 @@
 - 停用 Twitter 监控源：先调用 6551 `twitter_watch_delete`，成功后再把本地 `enabled` 改为 `false`。
 - 删除 Twitter 监控源：先调用 6551 `twitter_watch_delete`，成功后再删除本地 source。
 - 6551 同步失败时，不修改本地状态，向 owner 回复失败原因。
+- 同步成功时写入 `remoteWatchStatus=synced`、清空 `remoteWatchError`、更新 `remoteWatchSyncedAt`。
+- 同步失败时写入 `remoteWatchStatus=error` 和 `remoteWatchError`。
 - 非 Twitter 类型保持现有本地启停/删除行为。
 
 ### `src/bot/main.ts`
@@ -77,6 +91,7 @@ Telegram /add twitter @foo
   -> PostgreSQL monitor_sources insert
   -> watch registrar
   -> 6551 POST /open/twitter_watch_add { username: 'foo', newFlwBol: true, newUnFlwBol: true, ... }
+  -> PostgreSQL 更新 remoteWatchStatus
   -> Telegram 回复同步结果
 ```
 
@@ -87,7 +102,7 @@ Telegram 停用/删除 #62
   -> sourceActions.toggle() 或 sourceActions.delete()
   -> 读取本地 source
   -> 6551 POST /open/twitter_watch_delete { username: source.normalizedTarget }
-  -> 远端删除成功后再更新或删除 PostgreSQL monitor_sources
+  -> 远端删除成功后再更新或删除 PostgreSQL monitor_sources，并记录同步状态
   -> Telegram 回复同步结果
 ```
 
@@ -107,6 +122,7 @@ Telegram 停用/删除 #62
 - 6551 已存在：视作成功，因为目标状态已经满足。
 - 6551 删除时已不存在：视作成功，因为目标状态已经满足。
 - 停用/删除同步失败：不改变本地 `enabled` 或 source 记录，确保 owner 能重试。
+- 新增同步失败：保留本地 source 并记录 `remoteWatchStatus=error`，列表页应展示同步异常。
 - 远端同步成功但后续本地数据库更新失败：回复本地操作失败；owner 可重试，本地状态仍可被查询。
 - 运行时日志应记录 watch-add 成功、已存在、失败，便于排查。
 - 运行时日志应记录 watch-delete 成功、已不存在、失败，便于排查。
@@ -133,10 +149,14 @@ Telegram 停用/删除 #62
   - watch-delete 失败时不调用本地停用或删除。
   - 非 Twitter 类型不调用 6551。
 
+- `tests/services/source-service.test.ts`
+  - 创建 Twitter source 时能初始化远端同步状态。
+  - watch 同步成功/失败时能更新 `remoteWatchStatus`、`remoteWatchError`、`remoteWatchSyncedAt`。
+
 - `src/bot/main.ts` 的装配通过 typecheck 覆盖。
 
 ## 非目标
 
 - 不改变 WebSocket 连接方式。
 - 不补做周期性 reconcile。
-- 不保存 6551 同步状态到数据库。
+- 不把 6551 远端 watch 列表完整缓存到本地数据库；本地只保存每个 source 的最近一次同步状态。
