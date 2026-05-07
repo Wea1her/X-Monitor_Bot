@@ -16,6 +16,9 @@ const fakeRow = {
   normalizedTarget: 'elonmusk',
   configJson: {},
   enabled: true,
+  remoteWatchStatus: 'pending',
+  remoteWatchError: null,
+  remoteWatchSyncedAt: null,
   createdAt: new Date('2026-05-05'),
   updatedAt: new Date('2026-05-05')
 };
@@ -35,9 +38,140 @@ describe('sourceService.create', () => {
         target: 'ElonMusk',
         normalizedTarget: 'elonmusk',
         configJson: {},
-        enabled: true
+        enabled: true,
+        remoteWatchStatus: 'pending',
+        remoteWatchError: null,
+        remoteWatchSyncedAt: null
       }
     });
+  });
+
+  it('initializes twitter source remote watch status as pending', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(null);
+    prisma.monitorSource.create.mockResolvedValue(fakeRow);
+
+    await createSourceService(prisma).create({ type: 'twitter', input: '@ElonMusk' });
+
+    expect(prisma.monitorSource.create).toHaveBeenCalledWith({
+      data: {
+        type: 'twitter',
+        target: 'ElonMusk',
+        normalizedTarget: 'elonmusk',
+        configJson: {},
+        enabled: true,
+        remoteWatchStatus: 'pending',
+        remoteWatchError: null,
+        remoteWatchSyncedAt: null
+      }
+    });
+  });
+
+  it('initializes non-twitter source remote watch status as not_applicable', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(null);
+    prisma.monitorSource.create.mockResolvedValue({
+      ...fakeRow,
+      type: 'website',
+      target: 'https://example.com/',
+      normalizedTarget: 'https://example.com/',
+      remoteWatchStatus: 'not_applicable'
+    });
+
+    await createSourceService(prisma).create({ type: 'website', input: 'https://example.com' });
+
+    expect(prisma.monitorSource.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'website',
+        remoteWatchStatus: 'not_applicable',
+        remoteWatchError: null,
+        remoteWatchSyncedAt: null
+      })
+    });
+  });
+
+  it('marks remote watch sync success', async () => {
+    const syncedAt = new Date('2026-05-06T10:00:00Z');
+    prisma.monitorSource.findUnique.mockResolvedValue(fakeRow);
+    prisma.monitorSource.update.mockResolvedValue({
+      ...fakeRow,
+      remoteWatchStatus: 'synced',
+      remoteWatchSyncedAt: syncedAt
+    });
+
+    const result = await createSourceService(prisma).markRemoteWatchSynced(7, syncedAt);
+
+    expect(result.remoteWatchStatus).toBe('synced');
+    expect(prisma.monitorSource.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: {
+        remoteWatchStatus: 'synced',
+        remoteWatchError: null,
+        remoteWatchSyncedAt: syncedAt
+      }
+    });
+  });
+
+  it('rejects remote watch sync success for non-twitter source', async () => {
+    const websiteRow = {
+      ...fakeRow,
+      type: 'website',
+      target: 'https://example.com/',
+      normalizedTarget: 'https://example.com/',
+      remoteWatchStatus: 'not_applicable'
+    };
+    prisma.monitorSource.findUnique.mockResolvedValue(websiteRow);
+    prisma.monitorSource.update.mockResolvedValue(websiteRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchSynced(7)).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote watch sync success for missing source', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(null);
+    prisma.monitorSource.update.mockResolvedValue(fakeRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchSynced(7)).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
+  });
+
+  it('marks remote watch sync error', async () => {
+    prisma.monitorSource.findUnique.mockResolvedValue(fakeRow);
+    prisma.monitorSource.update.mockResolvedValue({
+      ...fakeRow,
+      remoteWatchStatus: 'error',
+      remoteWatchError: 'bad token'
+    });
+
+    const result = await createSourceService(prisma).markRemoteWatchError(7, 'bad token');
+
+    expect(result.remoteWatchStatus).toBe('error');
+    expect(prisma.monitorSource.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: {
+        remoteWatchStatus: 'error',
+        remoteWatchError: 'bad token'
+      }
+    });
+  });
+
+  it('rejects remote watch sync error for non-twitter source', async () => {
+    const websiteRow = {
+      ...fakeRow,
+      type: 'website',
+      target: 'https://example.com/',
+      normalizedTarget: 'https://example.com/',
+      remoteWatchStatus: 'not_applicable'
+    };
+    prisma.monitorSource.findUnique.mockResolvedValue(websiteRow);
+    prisma.monitorSource.update.mockResolvedValue(websiteRow);
+
+    await expect(createSourceService(prisma).markRemoteWatchError(7, 'bad token')).rejects.toThrow(
+      'Remote watch sync state is only supported for twitter sources'
+    );
+    expect(prisma.monitorSource.update).not.toHaveBeenCalled();
   });
 
   it('returns existing source when duplicate', async () => {

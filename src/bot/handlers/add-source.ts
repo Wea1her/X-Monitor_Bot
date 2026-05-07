@@ -9,16 +9,30 @@ export interface AddResult {
   message: string;
 }
 
+export interface WatchRegistrationDeps {
+  registerWatch?: (account: string) => Promise<{ ok: true; alreadyExists?: boolean } | { ok: false; error: string }>;
+}
+
 export async function performAddSource(
   services: ServicesBundle,
   type: string,
-  input: string
+  input: string,
+  watchDeps: WatchRegistrationDeps = {}
 ): Promise<AddResult> {
   try {
     const { source, alreadyExisted } = await services.sourceService.create({ type, input });
     const head = alreadyExisted
       ? `ℹ️ 已存在 #${source.id} ${type}:${source.normalizedTarget}`
       : `✅ 已添加 #${source.id} ${type}:${source.normalizedTarget}`;
+    if (source.type === 'twitter' && !alreadyExisted && watchDeps.registerWatch) {
+      const synced = await watchDeps.registerWatch(source.normalizedTarget);
+      if (synced.ok) {
+        await services.sourceService.markRemoteWatchSynced(source.id);
+        return { ok: true, message: `${head}\n✅ 已同步到 6551 监控` };
+      }
+      await services.sourceService.markRemoteWatchError(source.id, synced.error);
+      return { ok: true, message: `${head}\n⚠️ 6551 同步失败：${synced.error}` };
+    }
     const hint = workerNotAvailableHint(type);
     return { ok: true, message: hint ? `${head}\n${hint}` : head };
   } catch (error) {
@@ -28,7 +42,7 @@ export async function performAddSource(
 
 export const ADD_SOURCE_CONVERSATION = 'add-source';
 
-export function createAddSourceConversation(services: ServicesBundle) {
+export function createAddSourceConversation(services: ServicesBundle, watchDeps: WatchRegistrationDeps = {}) {
   return async function addSource(conversation: Conversation, ctx: Context): Promise<void> {
     await ctx.reply('选择监控类型：', { reply_markup: addTypePickerKeyboard() });
     const typeUpdate = await conversation.waitForCallbackQuery(/^add\.type\|a=/);
@@ -45,7 +59,7 @@ export function createAddSourceConversation(services: ServicesBundle) {
       await ctx.reply(CANCELLED, { reply_markup: mainMenu() });
       return;
     }
-    const result = await performAddSource(services, arg, input);
+    const result = await performAddSource(services, arg, input, watchDeps);
     await ctx.reply(result.message, { reply_markup: mainMenu() });
   };
 }

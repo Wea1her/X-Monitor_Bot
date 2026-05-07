@@ -13,9 +13,12 @@ model MonitorSource {
   target            String
   normalizedTarget  String             @map("normalized_target")
   configJson        Json               @map("config_json")
-  enabled           Boolean            @default(true)
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt      @map("updated_at")
+  enabled             Boolean            @default(true)
+  remoteWatchStatus   String             @default("pending") @map("remote_watch_status")
+  remoteWatchError    String?            @map("remote_watch_error")
+  remoteWatchSyncedAt DateTime?          @map("remote_watch_synced_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt      @map("updated_at")
 
   subscriptions     Subscription[]
   events            EventLog[]

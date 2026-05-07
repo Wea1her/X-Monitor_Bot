@@ -7,11 +7,18 @@ import {
 } from '@grammyjs/conversations';
 import { Bot, session, type Context, type SessionFlavor } from 'grammy';
 import { parseBotConfig } from '../config.js';
+import {
+  addWatchAccount,
+  deleteWatchAccount,
+  type AddWatchAccountResult,
+  type DeleteWatchAccountResult,
+  type WatchMutationOptions
+} from '../open-twitter.js';
 import { createDispatcher } from '../routing/dispatcher.js';
 import { createDestinationService } from '../services/destination-service.js';
 import { createEventService } from '../services/event-service.js';
 import { createMutualFollowService } from '../services/mutual-follow-service.js';
-import { createSourceService } from '../services/source-service.js';
+import { createSourceService, type SourceService } from '../services/source-service.js';
 import { createSubscriptionService } from '../services/subscription-service.js';
 import { getPrismaClient, disconnectPrisma } from '../store/prisma.js';
 import { createRedisClient, createRedisHelpers } from '../store/redis.js';
@@ -43,6 +50,41 @@ const ALLOWED_UPDATES = [
   'my_chat_member',
   'edited_message'
 ] as const;
+
+interface WatchSynchronizerDeps {
+  addWatchAccount?: (options: WatchMutationOptions) => Promise<AddWatchAccountResult>;
+  deleteWatchAccount?: (options: WatchMutationOptions) => Promise<DeleteWatchAccountResult>;
+}
+
+export function createWatchSynchronizer(twitterToken: string, deps: WatchSynchronizerDeps = {}) {
+  const add = deps.addWatchAccount ?? addWatchAccount;
+  const remove = deps.deleteWatchAccount ?? deleteWatchAccount;
+  return {
+    registerWatch: (account: string) => add({ token: twitterToken, account }),
+    unregisterWatch: (account: string) => remove({ token: twitterToken, account })
+  };
+}
+
+type SourceActions = Pick<ReturnType<typeof createSourceActionsHandler>, 'show' | 'toggle'>;
+
+export async function handleExplicitSourceEnabledCommand(
+  ctx: Context,
+  sourceService: Pick<SourceService, 'findById'>,
+  sourceActions: SourceActions,
+  sourceId: number,
+  enabled: boolean
+): Promise<void> {
+  const source = await sourceService.findById(sourceId);
+  if (!source) {
+    await ctx.reply(STALE_BUTTON);
+    return;
+  }
+  if (source.enabled !== enabled) {
+    await sourceActions.toggle(ctx, sourceId);
+    return;
+  }
+  await sourceActions.show(ctx, sourceId);
+}
 
 async function replayPendingUpdates(bot: Bot<AppContext>, offset: number): Promise<void> {
   let nextOffset = offset;
@@ -91,12 +133,13 @@ export async function main(): Promise<void> {
     destinationService,
     subscriptionService
   };
+  const watchSynchronizer = createWatchSynchronizer(config.twitterToken);
 
   const bot = new Bot<AppContext>(config.telegramBotToken);
   attachErrorHandler(bot);
 
   const listSources = createListSourcesHandler(sourceService);
-  const sourceActions = createSourceActionsHandler(services);
+  const sourceActions = createSourceActionsHandler(services, watchSynchronizer);
   const destinations = createDestinationsHandler(destinationService);
   const addSourceEntry = createAddSourceEntry();
 
@@ -129,7 +172,7 @@ export async function main(): Promise<void> {
   bot.use(conversations<BaseContext, Context>());
   bot.use(
     createConversation<BaseContext, Context>(
-      createAddSourceConversation(services),
+      createAddSourceConversation(services, watchSynchronizer),
       ADD_SOURCE_CONVERSATION
     )
   );
@@ -150,7 +193,7 @@ export async function main(): Promise<void> {
       return;
     }
     const [type, ...rest] = args;
-    const result = await performAddSource(services, type, rest.join(' '));
+    const result = await performAddSource(services, type, rest.join(' '), watchSynchronizer);
     await ctx.reply(result.message, { reply_markup: mainMenu() });
   });
 
@@ -169,15 +212,7 @@ export async function main(): Promise<void> {
       await ctx.reply('用法：/enable <id>');
       return;
     }
-    const source = await sourceService.findById(id);
-    if (!source) {
-      await ctx.reply(STALE_BUTTON);
-      return;
-    }
-    if (!source.enabled) {
-      await sourceService.setEnabled(id, true);
-    }
-    await sourceActions.show(ctx, id);
+    await handleExplicitSourceEnabledCommand(ctx, sourceService, sourceActions, id, true);
   });
 
   bot.command('disable', async (ctx) => {
@@ -186,15 +221,7 @@ export async function main(): Promise<void> {
       await ctx.reply('用法：/disable <id>');
       return;
     }
-    const source = await sourceService.findById(id);
-    if (!source) {
-      await ctx.reply(STALE_BUTTON);
-      return;
-    }
-    if (source.enabled) {
-      await sourceService.setEnabled(id, false);
-    }
-    await sourceActions.show(ctx, id);
+    await handleExplicitSourceEnabledCommand(ctx, sourceService, sourceActions, id, false);
   });
 
   bot.callbackQuery(/.+/, async (ctx) => {

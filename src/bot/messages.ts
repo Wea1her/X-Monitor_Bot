@@ -30,7 +30,11 @@ export function describeSourceLine(source: MonitorSource): string {
     configJson: (source.configJson ?? {}) as Record<string, unknown>
   });
   const status = source.enabled ? '✅' : '⏸';
-  return `#${source.id} ${status} ${desc}`;
+  const remote =
+    source.remoteWatchStatus === 'error'
+      ? ` ⚠️ 6551同步失败${source.remoteWatchError ? `：${source.remoteWatchError}` : ''}`
+      : '';
+  return `#${source.id} ${status} ${desc}${remote}`;
 }
 
 export function describeDestinationLine(dest: Destination): string {
